@@ -4,6 +4,17 @@
 sidebar groups tabs into workspaces; the strip at the top of the terminal shows
 only the selected workspace's tabs.
 
+![hyper-workspaces](screenshots/overview.webp)
+
+<details>
+<summary>More screenshots</summary>
+
+| Collapsed sidebar | Shortcuts modal |
+| --- | --- |
+| ![Collapsed](screenshots/collapsed.webp) | ![Shortcuts](screenshots/shortcuts.webp) |
+
+</details>
+
 ## Features
 
 - **Workspace sidebar**: blocks with the workspace name + active tab title;
