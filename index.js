@@ -21,13 +21,16 @@
 //   "+" on a block/strip     -> new tab inside that workspace
 //   "x" on a block           -> delete workspace (tabs move to the first one)
 //   drag strip tab           -> over a tab: reorder; onto a block: move group
-//   cmd+T                    -> new tab in the selected workspace
-//   cmd+R / cmd+shift+R      -> rename the active tab / selected workspace
-//   cmd+B                    -> collapse/expand the sidebar
-//                               (these three are rebindable from the help
-//                               modal; window:reload[Full] must stay unbound
-//                               in ~/.hyper.js keymaps so the keys reach us)
-//   cmd+1..9                 -> jump to the Nth tab of the CURRENT workspace
+//   cmd+T · cmd+D · cmd+shift+D · cmd+R · cmd+shift+R · cmd+B · cmd+W ·
+//   cmd+alt+left/right       -> plugin actions (new tab, splits, renames,
+//                               sidebar toggle, close pane, move tab); ALL
+//                               rebindable from the help modal. Their native
+//                               accelerators (tab:new, pane:splitRight/Down,
+//                               pane:close, window:reload[Full]) must stay
+//                               unbound in ~/.hyper.js keymaps.
+//   cmd+shift+[/]            -> previous / next tab of the CURRENT workspace
+//   cmd+1..9                 -> numeric tab jump, the only fixed shortcut
+//                               (it is a 9-key family, not a combo)
 //
 // Implementation notes for this setup:
 //   - The sidebar/strip are rendered by decorateTabs, which means they live
@@ -63,11 +66,20 @@ const DEFAULT_WIDTH = 240;
 const STRIP_HEIGHT = 32;
 // Reserved room for the macOS traffic lights in drag strips.
 const LIGHTS_WIDTH = 76;
-// Plugin-owned shortcuts (all cmd-based); rebindable from the help modal.
+// Plugin-owned shortcuts (cmd-based); all rebindable from the help modal.
+// Tab-switching (cmd+1..9, cmd+shift+[/]) is fixed on purpose.
 const DEFAULT_SHORTCUTS = {
-  renameTab: { code: 'KeyR', shift: false },
-  renameWorkspace: { code: 'KeyR', shift: true },
-  toggleSidebar: { code: 'KeyB', shift: false },
+  closeTab: { alt: false, code: 'KeyW', shift: false },
+  moveTabLeft: { alt: true, code: 'ArrowLeft', shift: false },
+  moveTabRight: { alt: true, code: 'ArrowRight', shift: false },
+  newTab: { alt: false, code: 'KeyT', shift: false },
+  nextTab: { alt: false, code: 'BracketRight', shift: true },
+  prevTab: { alt: false, code: 'BracketLeft', shift: true },
+  renameTab: { alt: false, code: 'KeyR', shift: false },
+  renameWorkspace: { alt: false, code: 'KeyR', shift: true },
+  splitHorizontal: { alt: false, code: 'KeyD', shift: true },
+  splitVertical: { alt: false, code: 'KeyD', shift: false },
+  toggleSidebar: { alt: false, code: 'KeyB', shift: false },
 };
 
 const KEY_GLYPHS = {
@@ -88,13 +100,13 @@ const KEY_GLYPHS = {
   Slash: '/',
 };
 
-const shortcutLabel = ({ code, shift }) => {
+const shortcutLabel = ({ alt, code, shift }) => {
   const glyph = /^Key[A-Z]$/.test(code)
     ? code.slice(3)
     : /^Digit[0-9]$/.test(code)
       ? code.slice(5)
       : KEY_GLYPHS[code] || code;
-  return `⌘${shift ? '⇧' : ''}${glyph}`;
+  return `⌘${alt ? '⌥' : ''}${shift ? '⇧' : ''}${glyph}`;
 };
 const STATE_FILE = path.join(__dirname, 'state.json');
 const GEOMETRY_STYLE_ID = 'hyper-workspaces-geometry';
@@ -148,7 +160,7 @@ const normalizeModel = (model) => {
     const saved = savedShortcuts[action];
     model.shortcuts[action] =
       saved && typeof saved.code === 'string'
-        ? { code: saved.code, shift: !!saved.shift }
+        ? { alt: !!saved.alt, code: saved.code, shift: !!saved.shift }
         : { ...DEFAULT_SHORTCUTS[action] };
   }
   model.sidebarWidth = clampWidth(model.sidebarWidth);
@@ -476,7 +488,6 @@ exports.decorateConfig = (config) => {
       cursor: pointer;
       font-family: inherit;
       line-height: inherit;
-      border-color: rgba(52, 120, 246, 0.55);
     }
     .ws_help_key.editable:hover {
       border-color: ${PALETTE.accent};
@@ -486,6 +497,9 @@ exports.decorateConfig = (config) => {
       border-color: ${PALETTE.accent};
       background: rgba(52, 120, 246, 0.22);
     }
+    /* Fixed (non-rebindable) shortcuts read as disabled. */
+    .ws_help_key.fixed { opacity: 0.38; }
+    .ws_help_row:has(.ws_help_key.fixed) .ws_help_txt { opacity: 0.4; }
     .ws_modal_note { margin-top: 10px; font-size: 10.5px; line-height: 1.5; opacity: 0.45; }
     .ws_help_txt { opacity: 0.7; }
     .ws_modal_small { width: 320px; }
@@ -756,12 +770,16 @@ exports.decorateTabs = (Tabs, { React }) => {
           this.setState({ recordingKey: null });
           return;
         }
-        if (!event.metaKey || event.ctrlKey || event.altKey) return;
+        if (!event.metaKey || event.ctrlKey) return;
         if (/^(Meta|Shift|Control|Alt)/.test(event.key)) return;
         const action = this.state.recordingKey;
-        const combo = { code: event.code, shift: event.shiftKey };
+        const combo = { alt: event.altKey, code: event.code, shift: event.shiftKey };
         const taken = Object.entries(this.state.model.shortcuts).some(
-          ([other, sc]) => other !== action && sc.code === combo.code && sc.shift === combo.shift
+          ([other, sc]) =>
+            other !== action &&
+            sc.code === combo.code &&
+            !!sc.shift === combo.shift &&
+            !!sc.alt === combo.alt
         );
         if (taken) return;
         this.commit((m) => {
@@ -770,32 +788,48 @@ exports.decorateTabs = (Tabs, { React }) => {
         this.setState({ recordingKey: null });
         return;
       }
-      const cmdOnly = event.metaKey && !event.ctrlKey && !event.altKey;
+      // Something earlier in the chain (e.g. hyper-tab-move-keys on its
+      // default cmd+alt+arrows) already handled this key.
+      if (event.defaultPrevented) return;
       const shortcuts = this.state.model.shortcuts;
-      const matches = (sc) => cmdOnly && event.shiftKey === sc.shift && event.code === sc.code;
-      if (matches(shortcuts.toggleSidebar)) {
-        event.preventDefault();
-        event.stopPropagation();
-        this.toggleSidebar();
-        return;
+      const matches = (sc) =>
+        event.metaKey &&
+        !event.ctrlKey &&
+        event.altKey === !!sc.alt &&
+        event.shiftKey === !!sc.shift &&
+        event.code === sc.code;
+      // The keys reach the renderer because the corresponding Hyper menu
+      // accelerators are unbound in ~/.hyper.js keymaps.
+      const actions = {
+        closeTab: () => this.closeActiveSession(),
+        moveTabLeft: () => this.moveActiveTab(-1),
+        moveTabRight: () => this.moveActiveTab(1),
+        newTab: () => this.newTabShortcut(),
+        nextTab: () => this.cycleTab(1),
+        prevTab: () => this.cycleTab(-1),
+        renameTab: () => this.startTabRenameShortcut(),
+        renameWorkspace: () => this.startWorkspaceRenameShortcut(),
+        splitHorizontal: () => this.splitShortcut('HORIZONTAL'),
+        splitVertical: () => this.splitShortcut('VERTICAL'),
+        toggleSidebar: () => this.toggleSidebar(),
+      };
+      for (const [action, combo] of Object.entries(shortcuts)) {
+        if (actions[action] && matches(combo)) {
+          event.preventDefault();
+          event.stopPropagation();
+          actions[action]();
+          return;
+        }
       }
-      // The rename keys reach the renderer because window:reload and
-      // window:reloadFull are unbound in ~/.hyper.js keymaps.
-      if (matches(shortcuts.renameTab)) {
-        event.preventDefault();
-        event.stopPropagation();
-        this.startTabRenameShortcut();
-        return;
-      }
-      if (matches(shortcuts.renameWorkspace)) {
-        event.preventDefault();
-        event.stopPropagation();
-        this.startWorkspaceRenameShortcut();
-        return;
-      }
-      // cmd+1..9 jumps within the SELECTED workspace (tab:jump:prefix is
-      // unbound in ~/.hyper.js keymaps so the digits reach the renderer).
-      if (cmdOnly && !event.shiftKey && /^Digit[1-9]$/.test(event.code)) {
+      // cmd+1..9 jumps within the SELECTED workspace — fixed on purpose
+      // (tab switching); tab:jump:prefix is unbound in ~/.hyper.js keymaps.
+      if (
+        event.metaKey &&
+        !event.ctrlKey &&
+        !event.altKey &&
+        !event.shiftKey &&
+        /^Digit[1-9]$/.test(event.code)
+      ) {
         event.preventDefault();
         event.stopPropagation();
         const model = this.state.model;
@@ -821,6 +855,62 @@ exports.decorateTabs = (Tabs, { React }) => {
           renamingTab: null,
         });
       }
+    };
+
+    newTabShortcut = () => {
+      this.pendingAssign.push(this.state.model.selected);
+      openNewTab();
+    };
+
+    splitShortcut = (splitDirection) => {
+      if (!canOpenTabs()) return;
+      const state = window.store && window.store.getState();
+      const activeUid = state && state.sessions.activeUid;
+      if (activeUid) window.rpc.emit('new', { activeUid, splitDirection });
+    };
+
+    // Same semantics as Hyper's native pane:close (cmd+W): closes the
+    // focused SESSION; closing the last pane of a tab closes the tab.
+    closeActiveSession = () => {
+      if (!canOpenTabs()) return;
+      const state = window.store && window.store.getState();
+      const activeUid = state && state.sessions.activeUid;
+      if (activeUid) window.rpc.emit('exit', { uid: activeUid });
+    };
+
+    // Cycles between the CURRENT workspace's tabs (with wrap-around) —
+    // consistent with the per-workspace cmd+1..9 jump.
+    cycleTab = (delta) => {
+      const model = this.state.model;
+      const groupTabs = (this.props.tabs || []).filter(
+        (tab) => model.assign[tab.uid] === model.selected
+      );
+      if (groupTabs.length < 2) return;
+      const current = groupTabs.findIndex((tab) => tab.isActive);
+      const target = groupTabs[(current + delta + groupTabs.length) % groupTabs.length];
+      if (target && !target.isActive) this.selectTab(target.uid);
+    };
+
+    moveActiveTab = (delta) => {
+      if (!window.store) return;
+      const state = window.store.getState();
+      const ordered = state.termGroups && state.termGroups.termGroupsOrdered;
+      if (!ordered) return; // hyper-reorderable-tabs not installed
+      // termGroupsOrdered can carry uids of dead groups (its reducer misses
+      // the pty-exit flow), so step over LIVE neighbors and map the target
+      // back to its raw index for the MOVE_TAB dispatch.
+      const groups = state.termGroups.termGroups;
+      const uid = state.termGroups.activeRootGroup;
+      const live = ordered.filter((other) => groups[other]);
+      const from = live.indexOf(uid);
+      const to = from + delta;
+      if (from === -1 || to < 0 || to >= live.length) return;
+      window.store.dispatch({
+        type: MOVE_TAB,
+        uid,
+        position: ordered.indexOf(live[to]),
+        isAfter: delta > 0,
+      });
     };
 
     toggleHelp = (event) => {
@@ -872,18 +962,18 @@ exports.decorateTabs = (Tabs, { React }) => {
       const shortcuts = this.state.model.shortcuts;
       const recording = this.state.recordingKey;
       const rows = [
-        { key: '⌘T', text: 'New tab in the active workspace' },
-        { key: '⌘D', text: 'Vertical split in the tab' },
-        { key: '⌘⇧D', text: 'Horizontal split in the tab' },
+        { action: 'newTab', text: 'New tab in the active workspace' },
+        { action: 'splitVertical', text: 'Vertical split in the tab' },
+        { action: 'splitHorizontal', text: 'Horizontal split in the tab' },
         { action: 'renameTab', text: 'Rename the active tab' },
         { action: 'renameWorkspace', text: 'Rename the selected workspace' },
         { action: 'toggleSidebar', text: 'Collapse / expand the sidebar' },
-        { key: '⌘W', text: 'Close the tab' },
+        { action: 'closeTab', text: 'Close the pane / tab' },
+        { action: 'moveTabLeft', text: 'Move the tab left' },
+        { action: 'moveTabRight', text: 'Move the tab right' },
+        { action: 'prevTab', text: 'Previous tab in the workspace' },
+        { action: 'nextTab', text: 'Next tab in the workspace' },
         { key: '⌘1…9', text: "Jump to the workspace's Nth tab" },
-        { key: '⌘⇧[', text: 'Previous tab' },
-        { key: '⌘⇧]', text: 'Next tab' },
-        { key: '⌘⌥←', text: 'Move the tab left' },
-        { key: '⌘⌥→', text: 'Move the tab right' },
       ];
       return h(
         'div',
@@ -920,14 +1010,14 @@ exports.decorateTabs = (Tabs, { React }) => {
                     },
                     recording === row.action ? '…' : shortcutLabel(shortcuts[row.action])
                   )
-                : h('span', { className: 'ws_help_key' }, row.key),
+                : h('span', { className: 'ws_help_key fixed' }, row.key),
               h('span', { className: 'ws_help_txt' }, row.text)
             )
           ),
           h(
             'div',
             { className: 'ws_modal_note' },
-            'Shortcuts with a blue outline are editable: click, then press the new combination (with ⌘). The others come from Hyper (~/.hyper.js) and other plugins.'
+            'The numeric tab jump (⌘1…9) is fixed — it is a whole key family. Click any other chip, then press the new combination — ⌘ required, ⇧/⌥ allowed.'
           )
         )
       );

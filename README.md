@@ -4,14 +4,14 @@
 sidebar groups tabs into workspaces; the strip at the top of the terminal shows
 only the selected workspace's tabs.
 
-![hyper-workspaces](screenshots/overview.webp)
+![hyper-workspaces](screenshots/overview.png)
 
 <details>
 <summary>More screenshots</summary>
 
 | Collapsed sidebar | Shortcuts modal |
 | --- | --- |
-| ![Collapsed](screenshots/collapsed.webp) | ![Shortcuts](screenshots/shortcuts.webp) |
+| ![Collapsed](screenshots/collapsed.png) | ![Shortcuts](screenshots/shortcuts.png) |
 
 </details>
 
@@ -60,6 +60,11 @@ swallows the keys before the plugin sees them):
 
 ```js
 keymaps: {
+  // ⌘T / ⌘D / ⌘⇧D / ⌘W become plugin actions (new tab in workspace, splits, close pane)
+  'tab:new': '',
+  'pane:splitRight': '',
+  'pane:splitDown': '',
+  'pane:close': '',
   // ⌘R / ⌘⇧R rename tab/workspace (Reload stays available in the View menu)
   'window:reload': '',
   'window:reloadFull': '',
@@ -70,19 +75,23 @@ keymaps: {
 
 ## Shortcuts
 
-| Shortcut | Action |
+All shortcuts are rebindable from the shortcuts modal (`?` icon in the
+sidebar footer): click a chip, then press the new combination — `⌘` required,
+`⇧`/`⌥` allowed. The only fixed ones (dimmed in the modal) are the
+tab-switching keys.
+
+| Shortcut (default) | Action |
 | --- | --- |
 | `⌘T` | new tab in the active workspace |
-| `⌘D` | vertical split in the tab (native) |
-| `⌘⇧D` | horizontal split in the tab (native) |
-| `⌘R` \* | rename the active tab |
-| `⌘⇧R` \* | rename the selected workspace |
-| `⌘B` \* | collapse / expand the sidebar |
-| `⌘W` | close the tab |
-| `⌘1…9` | jump to the workspace's Nth tab |
-
-\* rebindable from the shortcuts modal (`?` icon in the sidebar footer): click
-the shortcut chip, then press the new combination with `⌘`.
+| `⌘D` | vertical split in the tab |
+| `⌘⇧D` | horizontal split in the tab |
+| `⌘R` | rename the active tab |
+| `⌘⇧R` | rename the selected workspace |
+| `⌘B` | collapse / expand the sidebar |
+| `⌘W` | close the pane / tab |
+| `⌘⌥←` / `⌘⌥→` | move the tab left / right |
+| `⌘1…9` (fixed) | jump to the workspace's Nth tab |
+| `⌘⇧[` / `⌘⇧]` (fixed) | previous / next tab |
 
 ## Notes
 
