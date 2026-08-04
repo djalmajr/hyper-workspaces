@@ -684,7 +684,6 @@ exports.decorateTabs = (Tabs, { React }) => {
       this.state = { dropWs: null, helpOpen: false, model: loadModel(), recordingKey: null, renameTabValue: '', renameValue: '', renaming: null, renamingTab: null, resizing: false };
       this.seenUids = new Set();
       this.wsHadTabs = new Set();
-      this.pendingRenameWs = null;
       this.pendingAssign = [];
       this.didEnsureTabs = false;
       this.restoreActiveUid = null;
@@ -1048,17 +1047,6 @@ exports.decorateTabs = (Tabs, { React }) => {
         }
         this.seenUids.add(tab.uid);
       }
-      // The default tab of a brand-new workspace steals focus when it
-      // spawns, which would blur-commit an already-open rename input; the
-      // rename only starts once that tab has actually arrived.
-      if (
-        this.pendingRenameWs &&
-        tabs.some((tab) => model.assign[tab.uid] === this.pendingRenameWs)
-      ) {
-        const pending = model.workspaces.find((ws) => ws.id === this.pendingRenameWs);
-        this.pendingRenameWs = null;
-        if (pending) this.setState({ renameValue: pending.name, renaming: pending.id });
-      }
       for (const uid of Object.keys(model.assign)) {
         if (this.seenUids.has(uid) && !alive.has(uid)) {
           delete model.assign[uid];
@@ -1187,14 +1175,17 @@ exports.decorateTabs = (Tabs, { React }) => {
     };
 
     addWorkspace = () => {
-      const ws = { id: workspaceUid(), name: `Workspace ${this.state.model.workspaces.length + 1}` };
+      // Auto-named ("Workspace N", skipping names already in use); rename
+      // later via cmd+shift+R or double-click — no prompt on creation.
+      const taken = new Set(this.state.model.workspaces.map((ws) => ws.name));
+      let n = this.state.model.workspaces.length + 1;
+      while (taken.has(`Workspace ${n}`)) n += 1;
+      const ws = { id: workspaceUid(), name: `Workspace ${n}` };
       this.commit((m) => {
         m.workspaces.push(ws);
         m.selected = ws.id;
       });
-      // Every workspace starts with a tab of its own; the rename input opens
-      // via reconcile() after that tab arrives (see pendingRenameWs).
-      this.pendingRenameWs = ws.id;
+      // Every workspace starts with a tab of its own.
       this.pendingAssign.push(ws.id);
       openNewTab();
     };
