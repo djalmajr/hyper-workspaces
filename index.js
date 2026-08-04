@@ -63,7 +63,7 @@ const path = require('path');
 const MIN_WIDTH = 180;
 const MAX_WIDTH = 420;
 const DEFAULT_WIDTH = 240;
-const STRIP_HEIGHT = 32;
+const STRIP_HEIGHT = 36;
 // Reserved room for the macOS traffic lights in drag strips.
 const LIGHTS_WIDTH = 76;
 // Plugin-owned shortcuts (cmd-based); all rebindable from the help modal.
@@ -112,6 +112,10 @@ const STATE_FILE = path.join(__dirname, 'state.json');
 const GEOMETRY_STYLE_ID = 'hyper-workspaces-geometry';
 const MAX_ASSIGNMENTS = 300;
 const MOVE_TAB = '@@DRAGGABLE/MOVE_TAB';
+
+// Shell titles come as "user@host:cwd" (zsh default); only the path is
+// worth showing. Custom titles set via rename are never touched.
+const stripUserHost = (title) => (title || '').replace(/^\S+@\S+?:\s*/, '');
 
 // Fixed cmux palette, sampled from the reference screenshots.
 const PALETTE = {
@@ -365,6 +369,11 @@ exports.decorateConfig = (config) => {
     .ws_block.selected .ws_name { color: #fff; }
     .ws_meta {
       margin-top: 3px;
+      /* Paths matter at the END: rtl direction moves the ellipsis to the
+         LEFT and keeps the tail visible; LRM guards around the text stop
+         the bidi algorithm from reordering neutral chars like "~/". */
+      direction: rtl;
+      text-align: left;
       font-size: 11px;
       opacity: 0.55;
       white-space: nowrap;
@@ -388,8 +397,8 @@ exports.decorateConfig = (config) => {
       color: inherit;
       font-size: 16px;
       line-height: 1;
-      width: 22px;
-      height: 22px;
+      width: 18px;
+      height: 18px;
       padding: 0;
       display: flex;
       align-items: center;
@@ -617,6 +626,9 @@ exports.decorateConfig = (config) => {
     .wstrip_title {
       flex: 1;
       min-width: 0;
+      /* Same left-ellipsis treatment as .ws_meta (paths). */
+      direction: rtl;
+      text-align: left;
       white-space: nowrap;
       overflow: hidden;
       text-overflow: ellipsis;
@@ -659,37 +671,43 @@ exports.decorateConfig = (config) => {
 exports.decorateTabs = (Tabs, { React }) => {
   const h = React.createElement;
 
-  // Rendered at 16px over the 24-unit grid. strokeWidth 1.5 lands on a
-  // WHOLE 1 css px stroke (1.5 * 16/24 = 1): crisp on 1x displays and 2
-  // device px on retina. Round strokeWidth 2 would render 1.33px, straddle
-  // pixels and read as blurry/low quality.
-  const svgIcon = (...children) =>
+  // Icons render over the 24-unit lucide grid; strokeWidth = 24/size keeps
+  // the stroke at a WHOLE 1 css px at any size (16px -> 1.5, 14px -> ~1.71):
+  // crisp on 1x displays and 2 device px on retina. A fixed strokeWidth 2
+  // would render fractional strokes that straddle pixels and read blurry.
+  const svgIcon = (size, ...children) =>
     h(
       'svg',
       {
         fill: 'none',
-        height: 16,
+        height: size,
         stroke: 'currentColor',
         strokeLinecap: 'round',
         strokeLinejoin: 'round',
-        strokeWidth: 1.5,
+        strokeWidth: 24 / size,
         viewBox: '0 0 24 24',
-        width: 16,
+        width: size,
       },
       ...children
     );
-  // Lucide-style icons, all rendered at the same 16px size as the help one.
+  // Lucide-style icons; default 16px, close buttons on blocks/tabs use 14px.
   const ICONS = {
-    close: () => svgIcon(h('path', { d: 'M18 6 6 18' }), h('path', { d: 'm6 6 12 12' })),
+    close: (size = 16) =>
+      svgIcon(size, h('path', { d: 'M18 6 6 18' }), h('path', { d: 'm6 6 12 12' })),
     help: () =>
       svgIcon(
+        16,
         h('circle', { cx: 12, cy: 12, r: 10 }),
         h('path', { d: 'M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3' }),
         h('path', { d: 'M12 17h.01' })
       ),
     panel: () =>
-      svgIcon(h('rect', { height: 18, rx: 2, width: 18, x: 3, y: 3 }), h('path', { d: 'M9 3v18' })),
-    plus: () => svgIcon(h('path', { d: 'M5 12h14' }), h('path', { d: 'M12 5v14' })),
+      svgIcon(
+        16,
+        h('rect', { height: 18, rx: 2, width: 18, x: 3, y: 3 }),
+        h('path', { d: 'M9 3v18' })
+      ),
+    plus: () => svgIcon(16, h('path', { d: 'M5 12h14' }), h('path', { d: 'M12 5v14' })),
   };
 
   return class WorkspaceSidebar extends React.Component {
@@ -928,7 +946,8 @@ exports.decorateTabs = (Tabs, { React }) => {
       const active = (this.props.tabs || []).find((tab) => tab.isActive);
       if (!active) return;
       this.setState({
-        renameTabValue: this.state.model.tabTitle[active.uid] || active.title || '',
+        renameTabValue:
+          this.state.model.tabTitle[active.uid] || stripUserHost(active.title) || '',
         renamingTab: active.uid,
       });
     };
@@ -953,7 +972,7 @@ exports.decorateTabs = (Tabs, { React }) => {
     }
 
     titleOf(tab) {
-      return this.state.model.tabTitle[tab.uid] || tab.title || 'Shell';
+      return this.state.model.tabTitle[tab.uid] || stripUserHost(tab.title) || 'Shell';
     }
 
     closeShortcuts = () => this.setState({ helpOpen: false, recordingKey: null });
@@ -1464,11 +1483,11 @@ exports.decorateTabs = (Tabs, { React }) => {
                   title: 'Delete workspace (tabs move to the first one)',
                   onClick: (event) => this.deleteWorkspace(event, ws),
                 },
-                ICONS.close()
+                ICONS.close(14)
               )
             : null
         ),
-        h('div', { className: 'ws_meta' }, meta)
+        h('div', { className: 'ws_meta' }, `\u200e${meta}\u200e`)
       );
     }
 
@@ -1483,14 +1502,15 @@ exports.decorateTabs = (Tabs, { React }) => {
           onClick: () => this.selectTab(tab.uid),
           onDoubleClick: () =>
             this.setState({
-              renameTabValue: this.state.model.tabTitle[tab.uid] || tab.title || '',
+              renameTabValue:
+                this.state.model.tabTitle[tab.uid] || stripUserHost(tab.title) || '',
               renamingTab: tab.uid,
             }),
           onDragEnd: this.onTabDragEnd,
           onDragOver: (event) => this.onStripTabDragOver(event, tab.uid),
           onDragStart: (event) => this.onTabDragStart(event, tab.uid),
         },
-        h('span', { className: 'wstrip_title' }, this.titleOf(tab)),
+        h('span', { className: 'wstrip_title' }, `\u200e${this.titleOf(tab)}\u200e`),
         this.hasUnseenActivity(tab)
           ? h('span', { className: 'ws_dot', title: 'New activity' })
           : null,
@@ -1503,7 +1523,7 @@ exports.decorateTabs = (Tabs, { React }) => {
                 title: 'Close tab',
                 onClick: (event) => this.closeTab(event, tab.uid),
               },
-              ICONS.close()
+              ICONS.close(14)
             )
           : null
       );
