@@ -32,6 +32,9 @@ only the selected workspace's tabs.
 - **Rename via modal**: `⌘R` renames the active tab (persisted, overrides the
   shell title; empty restores it), `⌘⇧R` renames the workspace. Double-click
   works too.
+- **Context menus**: right-click a workspace block (rename, move up/down/
+  top/bottom, close) or a strip tab (rename, move left/right/start/end,
+  close).
 - **Shortcuts modal** on the `?` icon in the footer, with click-to-rebind for
   the plugin-owned shortcuts.
 - State (workspaces, assignments, titles, width, collapse, shortcuts) persists

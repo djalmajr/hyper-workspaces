@@ -21,6 +21,9 @@
 //   "+" on a block/strip     -> new tab inside that workspace
 //   "x" on a block           -> delete workspace (tabs move to the first one)
 //   drag strip tab           -> over a tab: reorder; onto a block: move group
+//   right-click block/tab    -> context menu: rename, move (up/down/top/
+//                               bottom for workspaces, left/right/start/end
+//                               for tabs) and close
 //   cmd+T · cmd+D · cmd+shift+D · cmd+R · cmd+shift+R · cmd+B · cmd+W ·
 //   cmd+alt+left/right       -> plugin actions (new tab, splits, renames,
 //                               sidebar toggle, close pane, move tab); ALL
@@ -294,7 +297,6 @@ exports.decorateConfig = (config) => {
       color: ${PALETTE.text};
       font-family: ${uiFont};
       font-size: 12px;
-      -webkit-font-smoothing: antialiased;
       user-select: none;
       cursor: default;
       pointer-events: auto;
@@ -511,6 +513,27 @@ exports.decorateConfig = (config) => {
     .ws_help_row:has(.ws_help_key.fixed) .ws_help_txt { opacity: 0.4; }
     .ws_modal_note { margin-top: 10px; font-size: 10.5px; line-height: 1.5; opacity: 0.45; }
     .ws_help_txt { opacity: 0.7; }
+    .ws_ctx {
+      position: fixed;
+      z-index: 300;
+      min-width: 176px;
+      background: #26272b;
+      border: 1px solid rgba(255, 255, 255, 0.14);
+      border-radius: 8px;
+      box-shadow: 0 10px 32px rgba(0, 0, 0, 0.5);
+      padding: 4px;
+      font-size: 12px;
+      pointer-events: auto;
+    }
+    .ws_ctx_item {
+      padding: 5px 10px;
+      border-radius: 5px;
+      cursor: pointer;
+      white-space: nowrap;
+    }
+    .ws_ctx_item:hover { background: ${PALETTE.accent}; color: #fff; }
+    .ws_ctx_item.disabled { opacity: 0.35; pointer-events: none; }
+    .ws_ctx_sep { height: 1px; margin: 4px 6px; background: rgba(255, 255, 255, 0.1); }
     .ws_modal_small { width: 320px; }
     .ws_modal_input {
       width: 100%;
@@ -570,12 +593,19 @@ exports.decorateConfig = (config) => {
       color: ${PALETTE.text};
       font-family: ${uiFont};
       font-size: 12px;
-      -webkit-font-smoothing: antialiased;
       user-select: none;
       pointer-events: auto;
       -webkit-app-region: drag;
       overflow-x: auto;
       overflow-y: hidden;
+    }
+    /* The thin "antialiased" smoothing looks refined on retina but washes
+       glyphs out on 1x displays (UltraGear): apply it only on HiDPI. On 1x
+       the default smoothing keeps full stem weight and reads sharper. */
+    @media (-webkit-min-device-pixel-ratio: 1.5) {
+      .wsbar, .wstrip, .ws_modal_overlay, .ws_ctx {
+        -webkit-font-smoothing: antialiased;
+      }
     }
     .wstrip::-webkit-scrollbar { height: 0; }
     .wstrip * { box-sizing: border-box; }
@@ -635,8 +665,8 @@ exports.decorateConfig = (config) => {
     }
     .wstrip_jump {
       flex: none;
-      font-size: 10px;
-      opacity: 0.35;
+      font-size: 11.5px;
+      color: rgba(231, 231, 234, 0.65);
       font-family: -apple-system, BlinkMacSystemFont, sans-serif;
     }
     .wstrip_new {
@@ -671,11 +701,10 @@ exports.decorateConfig = (config) => {
 exports.decorateTabs = (Tabs, { React }) => {
   const h = React.createElement;
 
-  // Icons render over the 24-unit lucide grid; strokeWidth = 24/size keeps
-  // the stroke at a WHOLE 1 css px at any size (16px -> 1.5, 14px -> ~1.71):
-  // crisp on 1x displays and 2 device px on retina. A fixed strokeWidth 2
-  // would render fractional strokes that straddle pixels and read blurry.
-  const svgIcon = (size, ...children) =>
+  // strokeWidth = grid/size keeps every stroke at a WHOLE 1 css px: crisp
+  // on 1x displays and 2 device px on retina. Fixed strokeWidth 2 would
+  // render fractional strokes that straddle pixels and read blurry.
+  const svgIcon = (size, grid, ...children) =>
     h(
       'svg',
       {
@@ -684,19 +713,24 @@ exports.decorateTabs = (Tabs, { React }) => {
         stroke: 'currentColor',
         strokeLinecap: 'round',
         strokeLinejoin: 'round',
-        strokeWidth: 24 / size,
-        viewBox: '0 0 24 24',
+        strokeWidth: grid / size,
+        viewBox: `0 0 ${grid} ${grid}`,
         width: size,
       },
       ...children
     );
-  // Lucide-style icons; default 16px, close buttons on blocks/tabs use 14px.
+  // close/help are diagonals and curves — anti-aliasing is natural there,
+  // so the lucide 24-grid is kept. panel/plus are made of horizontal and
+  // vertical strokes, the ones that read blurry on 1x displays (e.g. the
+  // UltraGear): they are drawn on a 16 grid with .5-aligned coordinates so
+  // the 1px stroke lands exactly on the pixel grid, like a native glyph.
   const ICONS = {
     close: (size = 16) =>
-      svgIcon(size, h('path', { d: 'M18 6 6 18' }), h('path', { d: 'm6 6 12 12' })),
+      svgIcon(size, 24, h('path', { d: 'M18 6 6 18' }), h('path', { d: 'm6 6 12 12' })),
     help: () =>
       svgIcon(
         16,
+        24,
         h('circle', { cx: 12, cy: 12, r: 10 }),
         h('path', { d: 'M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3' }),
         h('path', { d: 'M12 17h.01' })
@@ -704,16 +738,18 @@ exports.decorateTabs = (Tabs, { React }) => {
     panel: () =>
       svgIcon(
         16,
-        h('rect', { height: 18, rx: 2, width: 18, x: 3, y: 3 }),
-        h('path', { d: 'M9 3v18' })
+        16,
+        h('rect', { height: 11, rx: 1.5, width: 11, x: 2.5, y: 2.5 }),
+        h('path', { d: 'M6.5 2.5v11' })
       ),
-    plus: () => svgIcon(16, h('path', { d: 'M5 12h14' }), h('path', { d: 'M12 5v14' })),
+    plus: () =>
+      svgIcon(16, 16, h('path', { d: 'M3.5 8.5h10' }), h('path', { d: 'M8.5 3.5v10' })),
   };
 
   return class WorkspaceSidebar extends React.Component {
     constructor(props) {
       super(props);
-      this.state = { dropWs: null, helpOpen: false, model: loadModel(), recordingKey: null, renameTabValue: '', renameValue: '', renaming: null, renamingTab: null, resizing: false };
+      this.state = { ctxMenu: null, dropWs: null, helpOpen: false, model: loadModel(), recordingKey: null, renameTabValue: '', renameValue: '', renaming: null, renamingTab: null, resizing: false };
       this.seenUids = new Set();
       this.wsHadTabs = new Set();
       this.pendingAssign = [];
@@ -732,6 +768,7 @@ exports.decorateTabs = (Tabs, { React }) => {
       this.syncGeometry();
       window.addEventListener('keydown', this.onKeyDown, true);
       window.addEventListener('contextmenu', this.onGlobalContextMenu, true);
+      document.addEventListener('mousedown', this.onDocMouseDown);
       // Nudge xterm to re-fit now that .terms_terms is offset by the sidebar.
       this.scheduleRefit();
     }
@@ -739,6 +776,7 @@ exports.decorateTabs = (Tabs, { React }) => {
     componentWillUnmount() {
       window.removeEventListener('keydown', this.onKeyDown, true);
       window.removeEventListener('contextmenu', this.onGlobalContextMenu, true);
+      document.removeEventListener('mousedown', this.onDocMouseDown);
       window.removeEventListener('mousemove', this.onResizeMove);
       window.removeEventListener('mouseup', this.onResizeEnd);
       cancelAnimationFrame(this.refitRaf);
@@ -860,11 +898,15 @@ exports.decorateTabs = (Tabs, { React }) => {
       }
       if (
         event.key === 'Escape' &&
-        (this.state.helpOpen || this.state.renaming || this.state.renamingTab)
+        (this.state.helpOpen ||
+          this.state.renaming ||
+          this.state.renamingTab ||
+          this.state.ctxMenu)
       ) {
         event.preventDefault();
         event.stopPropagation();
         this.setState({
+          ctxMenu: null,
           helpOpen: false,
           recordingKey: null,
           renameTabValue: '',
@@ -1047,14 +1089,202 @@ exports.decorateTabs = (Tabs, { React }) => {
     };
 
     // Hyper opens the terminal context menu from a window-level listener;
-    // right-clicks on the sidebar, strip or modals are not terminal clicks.
+    // right-clicks on the sidebar, strip or modals are not terminal clicks;
+    // blocks and strip tabs open the plugin's own context menu instead.
     onGlobalContextMenu = (event) => {
       const target = event.target;
-      if (target && target.closest && target.closest('.wsbar, .wstrip, .ws_modal_overlay')) {
+      if (!target || !target.closest) return;
+      const block = target.closest('.ws_block');
+      const stripTab = target.closest('.wstrip_tab');
+      if (block || stripTab) {
+        event.preventDefault();
+        event.stopPropagation();
+        this.setState({
+          ctxMenu: {
+            id: block ? block.dataset.wsId : stripTab.dataset.tabUid,
+            kind: block ? 'ws' : 'tab',
+            x: event.clientX,
+            y: event.clientY,
+          },
+        });
+        return;
+      }
+      if (target.closest('.wsbar, .wstrip, .ws_modal_overlay, .ws_ctx')) {
         event.preventDefault();
         event.stopPropagation();
       }
     };
+
+    closeCtxMenu = () => {
+      if (this.state.ctxMenu) this.setState({ ctxMenu: null });
+    };
+
+    // Closes the context menu on any click outside it.
+    onDocMouseDown = (event) => {
+      if (!this.state.ctxMenu) return;
+      const target = event.target;
+      if (target.closest && target.closest('.ws_ctx')) return;
+      this.setState({ ctxMenu: null });
+    };
+
+    moveWorkspaceTo(wsId, kind) {
+      this.commit((m) => {
+        const from = m.workspaces.findIndex((ws) => ws.id === wsId);
+        if (from === -1) return;
+        const to =
+          kind === 'top'
+            ? 0
+            : kind === 'bottom'
+              ? m.workspaces.length - 1
+              : kind === 'up'
+                ? from - 1
+                : from + 1;
+        if (to < 0 || to >= m.workspaces.length || to === from) return;
+        const [moved] = m.workspaces.splice(from, 1);
+        m.workspaces.splice(to, 0, moved);
+      });
+    }
+
+    // Moves a tab within its workspace via hyper-reorderable-tabs' reducer.
+    moveTabInGroup(uid, kind) {
+      if (!window.store) return;
+      const state = window.store.getState();
+      const ordered = state.termGroups && state.termGroups.termGroupsOrdered;
+      if (!ordered) return;
+      const model = this.state.model;
+      const groupTabs = (this.props.tabs || []).filter(
+        (tab) => model.assign[tab.uid] === model.assign[uid]
+      );
+      const from = groupTabs.findIndex((tab) => tab.uid === uid);
+      if (from === -1) return;
+      const target =
+        kind === 'start'
+          ? groupTabs[0]
+          : kind === 'end'
+            ? groupTabs[groupTabs.length - 1]
+            : kind === 'left'
+              ? groupTabs[from - 1]
+              : groupTabs[from + 1];
+      if (!target || target.uid === uid) return;
+      window.store.dispatch({
+        type: MOVE_TAB,
+        uid,
+        position: ordered.indexOf(target.uid),
+        isAfter: kind === 'right' || kind === 'end',
+      });
+    }
+
+    renderCtxMenu() {
+      const { ctxMenu } = this.state;
+      const model = this.state.model;
+      let items;
+      if (ctxMenu.kind === 'ws') {
+        const index = model.workspaces.findIndex((ws) => ws.id === ctxMenu.id);
+        if (index === -1) return null;
+        const ws = model.workspaces[index];
+        const last = model.workspaces.length - 1;
+        items = [
+          {
+            label: 'Rename…',
+            run: () => this.setState({ renameValue: ws.name, renaming: ws.id }),
+          },
+          { sep: true },
+          { disabled: index === 0, label: 'Move up', run: () => this.moveWorkspaceTo(ws.id, 'up') },
+          {
+            disabled: index === last,
+            label: 'Move down',
+            run: () => this.moveWorkspaceTo(ws.id, 'down'),
+          },
+          {
+            disabled: index === 0,
+            label: 'Move to top',
+            run: () => this.moveWorkspaceTo(ws.id, 'top'),
+          },
+          {
+            disabled: index === last,
+            label: 'Move to bottom',
+            run: () => this.moveWorkspaceTo(ws.id, 'bottom'),
+          },
+          { sep: true },
+          {
+            disabled: model.workspaces.length <= 1,
+            label: 'Close',
+            run: () => this.removeWorkspace(ctxMenu.id),
+          },
+        ];
+      } else {
+        const uid = ctxMenu.id;
+        const tab = (this.props.tabs || []).find((other) => other.uid === uid);
+        if (!tab) return null;
+        const groupTabs = (this.props.tabs || []).filter(
+          (other) => model.assign[other.uid] === model.assign[uid]
+        );
+        const index = groupTabs.findIndex((other) => other.uid === uid);
+        const last = groupTabs.length - 1;
+        const canReorder = !!(
+          window.store && window.store.getState().termGroups.termGroupsOrdered
+        );
+        items = [
+          {
+            label: 'Rename…',
+            run: () =>
+              this.setState({
+                renameTabValue: model.tabTitle[uid] || stripUserHost(tab.title) || '',
+                renamingTab: uid,
+              }),
+          },
+          { sep: true },
+          {
+            disabled: !canReorder || index === 0,
+            label: 'Move left',
+            run: () => this.moveTabInGroup(uid, 'left'),
+          },
+          {
+            disabled: !canReorder || index === last,
+            label: 'Move right',
+            run: () => this.moveTabInGroup(uid, 'right'),
+          },
+          {
+            disabled: !canReorder || index === 0,
+            label: 'Move to start',
+            run: () => this.moveTabInGroup(uid, 'start'),
+          },
+          {
+            disabled: !canReorder || index === last,
+            label: 'Move to end',
+            run: () => this.moveTabInGroup(uid, 'end'),
+          },
+          { sep: true },
+          {
+            disabled: !this.props.onClose,
+            label: 'Close',
+            run: () => this.props.onClose(uid),
+          },
+        ];
+      }
+      const x = Math.min(ctxMenu.x, window.innerWidth - 196);
+      const y = Math.min(ctxMenu.y, window.innerHeight - items.length * 28 - 16);
+      return h(
+        'div',
+        { className: 'ws_ctx', style: { left: `${x}px`, top: `${y}px` } },
+        items.map((item, i) =>
+          item.sep
+            ? h('div', { className: 'ws_ctx_sep', key: `sep-${i}` })
+            : h(
+                'div',
+                {
+                  className: 'ws_ctx_item' + (item.disabled ? ' disabled' : ''),
+                  key: item.label,
+                  onClick: () => {
+                    if (!item.disabled) item.run();
+                    this.closeCtxMenu();
+                  },
+                },
+                item.label
+              )
+        )
+      );
+    }
 
     renderRenameModal() {
       const isWorkspace = !!this.state.renaming;
@@ -1299,18 +1529,22 @@ exports.decorateTabs = (Tabs, { React }) => {
       openNewTab();
     };
 
-    deleteWorkspace = (event, ws) => {
-      event.stopPropagation();
+    removeWorkspace(wsId) {
       this.commit((m) => {
         if (m.workspaces.length <= 1) return;
-        m.workspaces = m.workspaces.filter((other) => other.id !== ws.id);
+        m.workspaces = m.workspaces.filter((other) => other.id !== wsId);
         const fallback = m.workspaces[0].id;
         for (const uid of Object.keys(m.assign)) {
-          if (m.assign[uid] === ws.id) m.assign[uid] = fallback;
+          if (m.assign[uid] === wsId) m.assign[uid] = fallback;
         }
-        if (m.selected === ws.id) m.selected = fallback;
-        delete m.lastTab[ws.id];
+        if (m.selected === wsId) m.selected = fallback;
+        delete m.lastTab[wsId];
       });
+    }
+
+    deleteWorkspace = (event, ws) => {
+      event.stopPropagation();
+      this.removeWorkspace(ws.id);
     };
 
     newTabIn = (event, ws) => {
@@ -1457,6 +1691,7 @@ exports.decorateTabs = (Tabs, { React }) => {
             'ws_block' +
             (selected ? ' selected' : '') +
             (this.state.dropWs === ws.id ? ' drop' : ''),
+          'data-ws-id': ws.id,
           draggable: true,
           key: ws.id,
           onClick: () => this.selectWorkspace(ws),
@@ -1496,6 +1731,7 @@ exports.decorateTabs = (Tabs, { React }) => {
         'div',
         {
           className: 'wstrip_tab' + (tab.isActive ? ' active' : ''),
+          'data-tab-uid': tab.uid,
           draggable: true,
           key: tab.uid,
           title: this.titleOf(tab),
@@ -1510,11 +1746,11 @@ exports.decorateTabs = (Tabs, { React }) => {
           onDragOver: (event) => this.onStripTabDragOver(event, tab.uid),
           onDragStart: (event) => this.onTabDragStart(event, tab.uid),
         },
+        jumpIndex <= 9 ? h('span', { className: 'wstrip_jump' }, `⌘${jumpIndex}`) : null,
         h('span', { className: 'wstrip_title' }, `\u200e${this.titleOf(tab)}\u200e`),
         this.hasUnseenActivity(tab)
           ? h('span', { className: 'ws_dot', title: 'New activity' })
           : null,
-        jumpIndex <= 9 ? h('span', { className: 'wstrip_jump' }, `⌘${jumpIndex}`) : null,
         this.props.onClose
           ? h(
               'button',
@@ -1621,7 +1857,8 @@ exports.decorateTabs = (Tabs, { React }) => {
             : null
         ),
         this.state.helpOpen ? this.renderShortcuts() : null,
-        this.state.renaming || this.state.renamingTab ? this.renderRenameModal() : null
+        this.state.renaming || this.state.renamingTab ? this.renderRenameModal() : null,
+        this.state.ctxMenu ? this.renderCtxMenu() : null
       );
     }
   };
